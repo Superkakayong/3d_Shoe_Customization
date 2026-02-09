@@ -1,3 +1,9 @@
+# Dayong
+#*.stl
+#*.glb
+*.ply
+*.png
+
 *.whl
 
 # Docker build artifacts (wheel, dev package, ccache)
