@@ -2280,23 +2280,22 @@ visualize_extracted_pcd(
 pre_cut_line_indices = pre_cut_and_square_radius_indices[pre_cut_line_indices]
 
 
-
 # Now we want to extract the pre-cut region
 from extract_regions import *
 top_pcd = top_normals                      # o3d.geometry.PointCloud
-precut_pcd = pre_cut_line                  # o3d.geometry.PointCloud
+pre_cut_line_pcd = pre_cut_line                  # o3d.geometry.PointCloud
 outer_boundary_xy = np.asarray(top_pcd.points)[:, :2]   # IMPORTANT: outer boundary ONLY
 
-region_pcd, region_idx, extended_curve_xy, polygon_xy = extract_precut_region(
+pre_cut_region, pre_cut_region_idx, extended_curve_xy, polygon_xy = extract_pre_cut_region(
     top_pcd=top_pcd,
-    pre_cut_line_pcd=precut_pcd,
+    pre_cut_line_pcd=pre_cut_line_pcd,
     outer_boundary_xy=outer_boundary_xy,
     alpha=12.0,          # tune if needed
     extend_margin=6.0,   # tune if needed
     visualize=True,
 )
 
-print("Final pre-cut region points:", len(region_pcd.points))
+print("Final pre-cut region points:", len(pre_cut_region.points))
 
 
 

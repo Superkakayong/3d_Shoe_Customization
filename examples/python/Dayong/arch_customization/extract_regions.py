@@ -360,7 +360,7 @@ def visualize_precut_geometry(
 # 6) One-call helper for unit code
 # ============================================================
 
-def extract_precut_region(
+def extract_pre_cut_region(
     top_pcd: o3d.geometry.PointCloud,
     pre_cut_line_pcd: o3d.geometry.PointCloud,
     outer_boundary_xy: np.ndarray,
