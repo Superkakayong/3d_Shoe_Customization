@@ -2016,8 +2016,6 @@ stationary_case_path = os.path.join(dayong_dir, "scans", "STLs", "Scanner")
 # stationary_case = '/right_foot_mesh_j'
 # stationary_case_path = os.path.join(dayong_dir, "scans", "STLs", "iPhoneScans")
 
-mobile_case_path = os.path.join(dayong_dir, "scans", "STLs")
-
 # insole path
 insole_path = os.path.join(dayong_dir, "scans", "STLs", "iPhoneScans", "hd-0215.stl")
 
@@ -2073,30 +2071,25 @@ print("\n--- Method 1: Filter from min Z + distance ---")
 distance = 20.0  # Keep 2.0 units from the bottom
 filtered_pcd1 = filter_from_min_z_with_distance(pcd1_points, distance_from_min=distance)
 
-distance = 100.0  # Keep 2.0 units from the bottom
-cut_pcd1 = filter_from_min_z_with_distance(pcd1_points, distance_from_min=distance)
-
 ### ------------ rotate the orientation ----------------------
 # get rotation right for pcd1
 pca_result1 = compute_pca_orientation(filtered_pcd1)
 print("\n--- Aligning Major Axis to Y-axis ---PCD1")
-aligned_to_y_bot1, _ = align_major_axis_to_axis(filtered_pcd1, target_axis='y', pca_result=pca_result1)
-aligned_to_y1, _ = align_major_axis_to_axis(cut_pcd1, target_axis='y', pca_result=pca_result1)
+aligned_to_y_foot, _ = align_major_axis_to_axis(filtered_pcd1, target_axis='y', pca_result=pca_result1)
 
 # get rotation right for the insole
 pca_insole = compute_pca_orientation(insole_points)
 print("\n--- Aligning Major Axis to Y-axis ---PCD Insole")
 aligned_to_y_insole, insole_align_T = align_major_axis_to_axis(insole_points, target_axis='y', pca_result=pca_insole)
 
-aligned_to_y_bot1.paint_uniform_color([0, 0.5, 0])
-aligned_to_y1.paint_uniform_color([1, 0.5, 0])
+aligned_to_y_foot.paint_uniform_color([0, 0.5, 0])
 
 # paint the insole
 aligned_to_y_insole.paint_uniform_color([1, 0.5, 0])
 aligned_to_y_insole, insole_flip_T = flip_point_cloud_180(aligned_to_y_insole, axis='y')
 
 o3d.visualization.draw_geometries(
-            [aligned_to_y_bot1, o3d.geometry.TriangleMesh.create_coordinate_frame(size=200.0)],
+            [aligned_to_y_foot, o3d.geometry.TriangleMesh.create_coordinate_frame(size=200.0)],
             window_name="Aligned to Y-axis: Stationary",
             width=1400,
             height=900
@@ -2112,9 +2105,9 @@ o3d.visualization.draw_geometries(
 
 # insole - foot alignment
 # aligned_to_y_insole, aligned_to_y_bot1 = align_min_xyz(aligned_to_y_insole, aligned_to_y_bot1)
-aligned_to_y_insole, tx = align_min_x(aligned_to_y_insole, aligned_to_y_bot1)
-aligned_to_y_insole, ty = align_min_y(aligned_to_y_insole, aligned_to_y_bot1)
-aligned_to_y_insole, tz = align_z(aligned_to_y_insole, aligned_to_y_bot1, 13)
+aligned_to_y_insole, tx = align_min_x(aligned_to_y_insole, aligned_to_y_foot)
+aligned_to_y_insole, ty = align_min_y(aligned_to_y_insole, aligned_to_y_foot)
+aligned_to_y_insole, tz = align_z(aligned_to_y_insole, aligned_to_y_foot, 13)
 
 # estimate normals of aligned_to_y_insole
 aligned_to_y_insole.estimate_normals(
@@ -2125,7 +2118,7 @@ aligned_to_y_insole.estimate_normals(
 )
 
 o3d.visualization.draw_geometries(
-            [aligned_to_y_insole, aligned_to_y_bot1, o3d.geometry.TriangleMesh.create_coordinate_frame(size=200.0)],
+            [aligned_to_y_insole, aligned_to_y_foot, o3d.geometry.TriangleMesh.create_coordinate_frame(size=200.0)],
             window_name="Aligned to Y-axis: insole",
             width=1400,
             height=900
@@ -2300,7 +2293,82 @@ print("Final pre-cut region points:", len(pre_cut_region.points))
 
 
 
-# Workflow - Foot
+# Workflow - Dynamic Foot-Insole Alignment
+from align import *
+
+# ------------------------------------------------------------
+# 1) Build insole surface WITHOUT pre-cut region
+#    NOTE: pre_cut_region_idx must be indices into top_normals
+# ------------------------------------------------------------
+top_without_pre_cut_region = remove_region_from_pcd(top_normals, pre_cut_region_idx)
+
+# ------------------------------------------------------------
+# 2) Choose which "foot point cloud" you want to warp
+# ------------------------------------------------------------
+aligned_foot = aligned_to_y_foot
+
+# Visualize before warping
+o3d.visualization.draw_geometries(
+    [top_without_pre_cut_region.paint_uniform_color([0.7, 0.7, 0.7]), aligned_foot.paint_uniform_color([0.0, 1.0, 0.0])],
+        window_name="Before: Foot-Insole Dynamic Alignment Result",
+        mesh_show_back_face=True)
+
+# ------------------------------------------------------------
+# 3) Sweep Y cutters and compute dz(y)
+# ------------------------------------------------------------
+profile = compute_dz_profile(
+    foot_pcd=aligned_foot,
+    insole_pcd=top_without_pre_cut_region,
+    cutter_width=1.0,        # 1mm thick cutter
+    y_step=1.0,            # move by 1mm each iteration
+    foot_z_stat="p05",     # robust vs min (avoid one low noisy point)
+    insole_z_stat="median",
+    min_points_per_cutter=50
+)
+
+y_samples = profile["y_samples"]
+dz_samples = profile["dz_samples"]
+print(f"[dynamic] dz samples: {len(dz_samples)}")
+
+# ------------------------------------------------------------
+# 4) Build interpolation f(y)
+# ------------------------------------------------------------
+f_dz = build_dz_interpolator(
+    y_samples=y_samples,
+    dz_samples=dz_samples,
+    kind="linear",
+    fill_mode="clamp"
+)
+
+# ------------------------------------------------------------
+# 5) Warp foot points by z_new = z_old - f(y)
+# ------------------------------------------------------------
+warped_foot, dz_per_point = warp_foot_by_dz_function(
+    foot_pcd=aligned_foot,
+    f_dz=f_dz,
+    y_smooth_window=3.0,        # optional smoothing in Y (mm), try 0.0 / 3.0 / 5.0
+    return_displacements=True
+)
+
+print(f"[dynamic] warped foot points: {len(warped_foot.points)}")
+print(f"[dynamic] dz stats: min={dz_per_point.min():.3f}, mean={dz_per_point.mean():.3f}, max={dz_per_point.max():.3f}")
+
+# Visualize after warping
+o3d.visualization.draw_geometries(
+    [top_without_pre_cut_region.paint_uniform_color([0.7, 0.7, 0.7]), warped_foot.paint_uniform_color([0.0, 1.0, 0.0])],
+        window_name="After: Foot-Insole Dynamic Alignment",
+        mesh_show_back_face=True)
+
+o3d.visualization.draw_geometries(
+    [top_without_pre_cut_region.paint_uniform_color([0.7, 0.7, 0.7]), warped_foot.paint_uniform_color([0.0, 1.0, 0.0]), side_and_bottom_normals.paint_uniform_color([0.7, 0.7, 0.7])],
+        window_name="After: Foot-Insole Dynamic Alignment",
+        mesh_show_back_face=True)
+
+
+
+
+
+
 # def get_arch(bottom_foot_pcd: o3d.geometry.PointCloud, entire_foot_pcd: o3d.geometry.PointCloud):
 #     # 7. Use the largest_piece as the plane; non_plane_pcd contains the arch
 #     plane_pcd, non_plane_pcd, plane_model = segment_plane_ransac(
