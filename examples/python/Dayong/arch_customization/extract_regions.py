@@ -1,7 +1,7 @@
 import numpy as np
 import open3d as o3d
 
-from typing import Tuple, Optional
+from typing import Tuple, Dict, Any, Optional
 
 from sklearn.decomposition import PCA
 from scipy.spatial import Delaunay
@@ -235,7 +235,7 @@ def _polygon_area_xy(poly: np.ndarray) -> float:
     return 0.5 * abs(np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1)))
 
 
-def build_precut_polygon_smaller_area(
+def build_pre_cut_polygon_smaller_area(
     extended_curve_xy: np.ndarray,
     boundary_loop_xy: np.ndarray,
 ) -> np.ndarray:
@@ -290,7 +290,7 @@ def build_precut_polygon_smaller_area(
 # 4) Extract pre-cut region points (point-in-polygon)
 # ============================================================
 
-def extract_precut_region_from_polygon(
+def extract_pre_cut_region_from_polygon(
     top_pcd: o3d.geometry.PointCloud,
     polygon_xy: np.ndarray,
     visualize: bool = True,
@@ -327,7 +327,7 @@ def extract_precut_region_from_polygon(
 # 5) Debug visualization (curve + polygon)
 # ============================================================
 
-def visualize_precut_geometry(
+def visualize_pre_cut_geometry(
     top_pcd: o3d.geometry.PointCloud,
     curve_xy: np.ndarray,
     polygon_xy: np.ndarray,
@@ -387,18 +387,90 @@ def extract_pre_cut_region(
         extend_margin=extend_margin,
     )
 
-    polygon_xy = build_precut_polygon_smaller_area(
+    polygon_xy = build_pre_cut_polygon_smaller_area(
         extended_curve_xy=extended_curve_xy,
         boundary_loop_xy=boundary_loop_xy,
     )
 
     if visualize:
-        visualize_precut_geometry(top_pcd, extended_curve_xy, polygon_xy)
+        visualize_pre_cut_geometry(top_pcd, extended_curve_xy, polygon_xy)
 
-    region_pcd, region_idx = extract_precut_region_from_polygon(
+    region_pcd, region_idx = extract_pre_cut_region_from_polygon(
         top_pcd,
         polygon_xy=polygon_xy,
         visualize=visualize,
     )
 
     return region_pcd, region_idx, extended_curve_xy, polygon_xy
+
+
+# ============================================================
+# Arch region extraction from the foot
+# ============================================================
+def extract_arch_from_foot(
+    warped_foot: o3d.geometry.PointCloud,
+    polygon_xy: np.ndarray,
+    z_band_from_pre_cut: Optional[o3d.geometry.PointCloud] = None,
+    z_margin: float = 10.0,
+    z_use_percentile: bool = True,
+    z_p_lo: float = 5.0,
+    z_p_hi: float = 95.0,
+    return_indices: bool = True,
+) -> Tuple[o3d.geometry.PointCloud, np.ndarray, Dict[str, float]]:
+    """
+    Extract foot points whose XY are inside the pre-cut polygon.
+
+    Optionally, apply a Z band filter derived from pre_cut_region (recommended).
+    This prevents grabbing unrelated foot parts that happen to project into the polygon in XY.
+
+    Returns:
+      patch_pcd, patch_idx (indices into warped_foot), debug_info
+    """
+    foot_pts = np.asarray(warped_foot.points)
+    if foot_pts.size == 0:
+        return o3d.geometry.PointCloud(), np.array([], dtype=int), {}
+
+    poly = np.asarray(polygon_xy, dtype=float)
+    if poly.ndim != 2 or poly.shape[1] != 2 or len(poly) < 3:
+        raise ValueError("polygon_xy must be (N,2) with N>=3")
+
+    foot_xy = foot_pts[:, :2]
+    path = Path(poly)
+    inside_xy = path.contains_points(foot_xy)
+
+    # optional Z band filter
+    z_keep = np.ones(len(foot_pts), dtype=bool)
+    debug = {}
+
+    if z_band_from_pre_cut is not None and len(z_band_from_pre_cut.points) > 0:
+        pre_cut_pts = np.asarray(z_band_from_pre_cut.points)
+        pre_cut_z = pre_cut_pts[:, 2]
+
+        if z_use_percentile:
+            z_lo = float(np.percentile(pre_cut_z, z_p_lo))
+            z_hi = float(np.percentile(pre_cut_z, z_p_hi))
+        else:
+            z_lo = float(pre_cut_z.min())
+            z_hi = float(pre_cut_z.max())
+
+        z_lo -= float(z_margin)
+        z_hi += float(z_margin)
+
+        z = foot_pts[:, 2]
+        z_keep = (z >= z_lo) & (z <= z_hi)
+
+        debug.update({"z_lo": z_lo, "z_hi": z_hi})
+
+    keep = inside_xy & z_keep
+    idx = np.where(keep)[0].astype(int)
+    patch = warped_foot.select_by_index(idx)
+
+    debug.update({
+        "n_foot": int(len(foot_pts)),
+        "n_inside_xy": int(np.count_nonzero(inside_xy)),
+        "n_kept": int(len(idx)),
+    })
+
+    if return_indices:
+        return patch, idx, debug
+    return patch, np.array([], dtype=int), debug
