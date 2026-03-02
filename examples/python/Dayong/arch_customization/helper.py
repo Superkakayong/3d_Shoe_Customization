@@ -1,5 +1,6 @@
 import numpy as np
 import open3d as o3d
+import copy
 
 def normalize_mesh_to_mm(mesh: o3d.geometry.TriangleMesh, print_log=True):
     """
@@ -179,6 +180,18 @@ def visualize_extracted_pcd(
         mesh_show_back_face=True,
     )
 
+def visualize_mesh(mesh: o3d.geometry.TriangleMesh, title: str = "Mesh"):
+    m = o3d.geometry.TriangleMesh(mesh)
+    m.paint_uniform_color([0.7, 0.7, 0.7])
+    m.compute_vertex_normals()
+    o3d.visualization.draw_geometries(
+        [m],
+        window_name=title,
+        width=1400,
+        height=900,
+        mesh_show_back_face=True,
+    )
+
 def pcd_to_mesh_bpa(
     arch_pcd: o3d.geometry.PointCloud,
     normal_radius: float = 6.0,
@@ -232,4 +245,63 @@ def pcd_to_mesh_bpa(
         mesh = mesh.simplify_quadric_decimation(target_number_of_triangles=simplify_target_tris)
 
     mesh.compute_vertex_normals()
+    return mesh
+
+def poisson_reconstruction(input_mesh, depth: object = 8, scale: object = 1.1, linear_fit: object = False, n_threads: object = 4):
+    mesh = copy.deepcopy(input_mesh)
+    pcd = mesh.sample_points_poisson_disk(number_of_points=100000)
+
+    dists = pcd.compute_nearest_neighbor_distance()
+    avg_spacing = np.mean(dists)
+    radius = 5 #5 * avg_spacing  # Start with 5× spacing # 0.005
+    max_nn = 30
+    k = 50
+
+    # Estimate normals
+    pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=radius, max_nn=max_nn))
+    pcd.orient_normals_consistent_tangent_plane(k=k)
+
+    # Perform Poisson surface reconstruction
+    print("starting mesh generation!")
+    # mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(pcd, depth=depth, scale=scale, linear_fit=linear_fit, n_threads=n_threads)
+
+    radii = [2.0, 4.0]
+    mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_ball_pivoting(pcd, o3d.utility.DoubleVector(radii))
+
+    # Remove low-density vertices (optional)
+    # vertices_to_remove = densities < np.quantile(densities, 0.01) # Compute the 1st percentile
+    # mesh.remove_vertices_by_mask(vertices_to_remove)
+
+    # Clean up mesh (optional)
+    mesh.remove_degenerate_triangles()
+    mesh.remove_duplicated_triangles()
+    mesh.remove_duplicated_vertices()
+    mesh.remove_unreferenced_vertices()
+    mesh.remove_non_manifold_edges()
+    mesh.compute_vertex_normals()
+
+    print("finished mesh generation!")
+
+    return mesh
+
+def bpa_reconstruction(pcd):
+    print("Estimating normals...")
+    pcd.estimate_normals(
+        search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=3.0, max_nn=30)
+    )
+    pcd.orient_normals_consistent_tangent_plane(k=50)
+
+    print("Running BPA...")
+    radii = [2.0, 4.0]  # tune based on spacing
+    mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_ball_pivoting(
+        pcd,
+        o3d.utility.DoubleVector(radii)
+    )
+
+    mesh.remove_degenerate_triangles()
+    mesh.remove_duplicated_triangles()
+    mesh.remove_duplicated_vertices()
+    mesh.remove_unreferenced_vertices()
+    mesh.compute_vertex_normals()
+
     return mesh
