@@ -2148,7 +2148,7 @@ colors[:, 2] = (1 - nz) / 2   # blue = down
 insole_copy.colors = o3d.utility.Vector3dVector(colors)
 o3d.visualization.draw_geometries([insole_copy], window_name="Normals visualized by Z direction (red=up, blue=down)")
 
-top_normals, side_and_bottom_normals = extract_top(insole_copy, min_dot=0.2)
+top_normals, side_and_bottom_normals = extract_top(insole_copy, cos=0.2)
 top_normals.paint_uniform_color([1, 0, 0])        # red
 o3d.visualization.draw_geometries([top_normals], window_name="Normal-based surface split")
 
@@ -2239,7 +2239,7 @@ print("cut1_no_outer points:", len(pre_cut_and_square.points))
 pre_cut_and_square_indices = top_boundaries_indices[keep_local_idx]
 
 # Now we want to clean the outliers
-pre_cut_and_square, radius_local_idx = pre_cut_and_square.remove_radius_outlier(nb_points=20, radius=15.0)
+pre_cut_and_square, radius_local_idx = pre_cut_and_square.remove_radius_outlier(nb_points=22, radius=15.0)
 
 # get the indices into top_grid_kdtree/top_normals
 pre_cut_and_square_radius_indices = pre_cut_and_square_indices[radius_local_idx]
@@ -2252,10 +2252,11 @@ visualize_extracted_pcd(
 )
 
 # Now we want to remove the square
-pre_cut_line, pre_cut_line_indices = trim_by_y_range(
+pre_cut_line, pre_cut_line_indices = trim_by_axis_range(
     pre_cut_and_square,
-    y_min_ratio=0.17,
-    y_max_ratio=1.00,
+    axis='y',
+    min_ratio=0.17,
+    max_ratio=1.00,
     return_indices=True
 )
 
@@ -2275,7 +2276,7 @@ pre_cut_line_indices = pre_cut_and_square_radius_indices[pre_cut_line_indices]
 
 # Now we want to extract the pre-cut region
 from extract_regions import *
-top_pcd = top_normals                      # o3d.geometry.PointCloud
+top_pcd = copy.deepcopy(top_normals)                      # o3d.geometry.PointCloud
 pre_cut_line_pcd = pre_cut_line                  # o3d.geometry.PointCloud
 outer_boundary_xy = np.asarray(top_pcd.points)[:, :2]   # IMPORTANT: outer boundary ONLY
 
@@ -2363,6 +2364,48 @@ o3d.visualization.draw_geometries(
     [top_without_pre_cut_region.paint_uniform_color([0.7, 0.7, 0.7]), warped_foot.paint_uniform_color([0.0, 1.0, 0.0]), side_and_bottom_normals.paint_uniform_color([0.7, 0.7, 0.7])],
         window_name="After: Foot-Insole Dynamic Alignment",
         mesh_show_back_face=True)
+
+
+# Workflow - Extract the arch region from the foot
+# Use polygon_xy from extract_pre_cut_region + z band from pre_cut_region for stability
+
+# Use the blade to get the bottom of the foot
+# bottom_foot = get_bottom_surface(warped_foot, 5.0, y_min_ratio=0.01, y_max_ratio=0.8)
+
+arch_region, arch_region_idx, dbg = extract_arch_from_foot(
+    warped_foot=warped_foot, # use warped_foot or bottom_foot
+    polygon_xy=polygon_xy,
+    z_band_from_pre_cut=pre_cut_region,  # <-- important
+    z_margin=12.0,                      # tune: 8~20
+    z_use_percentile=True,
+    z_p_lo=5.0,
+    z_p_hi=95.0,
+    return_indices=True
+)
+o3d.visualization.draw_geometries(
+    [top_without_pre_cut_region.paint_uniform_color([0.7, 0.7, 0.7]),
+     side_and_bottom_normals.paint_uniform_color([0.7, 0.7, 0.7]),
+     arch_region.paint_uniform_color([0.0, 1.0, 0.0])],
+    window_name="Foot Arch Region Extraction",
+    mesh_show_back_face=True,
+)
+
+# get the bottom part of the arch region
+arch_region_bottom = extract_bottom(pcd=arch_region, cos=0.766)
+o3d.visualization.draw_geometries(
+    [top_normals.paint_uniform_color([0.7, 0.7, 0.7]),
+     side_and_bottom_normals.paint_uniform_color([0.7, 0.7, 0.7]),
+     arch_region_bottom.paint_uniform_color([0.0, 1.0, 0.0])],
+    window_name="Extract the Bottom Part of the Arch Region",
+    mesh_show_back_face=True,
+)
+
+
+
+
+# Save to STL
+# o3d.io.write_triangle_mesh("custom_insole_union.stl", union_mesh)
+# print("Saved: custom_insole_union.stl")
 
 
 
