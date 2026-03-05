@@ -2180,7 +2180,7 @@ print(len(side_and_bottom_normals.points))
 # print(len(top_grid.points))
 # print(len(top_grid_kdtree.points))
 
-# Now we want to get the pre-cut line and the area it encloses
+# Workflow - Now we want to get the pre-cut line and the area it encloses
 from extract_lines import *
 from clean import *
 
@@ -2369,7 +2369,7 @@ o3d.visualization.draw_geometries(
 # Workflow - Extract the arch region from the foot
 # Use polygon_xy from extract_pre_cut_region + z band from pre_cut_region for stability
 
-# Use the blade to get the bottom of the foot
+# Use the blade to get the bottom of the foot (not suitable here)
 # bottom_foot = get_bottom_surface(warped_foot, 5.0, y_min_ratio=0.01, y_max_ratio=0.8)
 
 arch_region, arch_region_idx, dbg = extract_arch_from_foot(
@@ -2390,24 +2390,83 @@ o3d.visualization.draw_geometries(
     mesh_show_back_face=True,
 )
 
-# get the bottom part of the arch region
-arch_region_bottom = extract_bottom(pcd=arch_region, cos=0.766)
+# Workflow - Combine [arch + side and bottom + top]
+from generate_mesh import *
+# Method 1: transform the points of the pre-cut region to match the shape of the real arch
+# transformed_top_insole, transformed_pre_cut_region, update_mask = transform_pre_cut_region(
+#     top_insole=top_normals,
+#     arch=arch_region,
+#     polygon_xy=polygon_xy,
+#     method="linear", # "linear" safest; "cubic" can overshoot
+#     max_xy_dist=8.0, # tune: 5~12 mm depending on density
+#     return_region_pcd=True,
+# )
+# o3d.visualization.draw_geometries(
+#     [transformed_top_insole.paint_uniform_color([0.0, 1.0, 0.0])],
+#     window_name="updated_insole_pcd",
+#     mesh_show_back_face=True,
+# )
+# o3d.visualization.draw_geometries(
+#     [transformed_top_insole.paint_uniform_color([0.0, 1.0, 0.0]),
+#      side_and_bottom_normals.paint_uniform_color([0.7, 0.7, 0.7])],
+#     window_name="Extract the Bottom Part of the Arch Region",
+#     mesh_show_back_face=True,
+# )
+#
+# # re-estimate the normals of the transformed_pre_cut_region
+# transformed_pre_cut_region.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=5, max_nn=30))
+# transformed_pre_cut_region.orient_normals_consistent_tangent_plane(k=50)
+# o3d.visualization.draw_geometries([transformed_pre_cut_region], point_show_normal=True, window_name="transformed_pre_cut_region normals")
+#
+# # get the bottom part of the transformed pre-cut region (result not good as there are outliers groups)
+# transformed_pre_cut_region_bottom = extract_bottom(pcd=transformed_pre_cut_region, cos=0.866)
+# o3d.visualization.draw_geometries(
+#     [transformed_pre_cut_region_bottom.paint_uniform_color([0.0, 1.0, 0.0])],
+#     window_name="transformed_pre_cut_region_bottom",
+#     mesh_show_back_face=True,
+# )
+# o3d.visualization.draw_geometries(
+#     [transformed_pre_cut_region_bottom.paint_uniform_color([0.7, 0.7, 0.7]),
+#      side_and_bottom_normals.paint_uniform_color([0.7, 0.7, 0.7]),
+#      top_without_pre_cut_region.paint_uniform_color([0.0, 1.0, 0.0])],
+#     window_name="Final",
+#     mesh_show_back_face=True,
+# )
+
+# Method 2: just use the arch_region and trim the side
+# get the bottom part of the arch region (i.e. remove the side)
+arch_region_bottom = extract_bottom(pcd=arch_region, cos=0.866)
+
+# re-estimate the normals of the arch_region
+arch_region_bottom.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=5, max_nn=30))
+arch_region_bottom.orient_normals_consistent_tangent_plane(k=50)
+o3d.visualization.draw_geometries([arch_region_bottom], point_show_normal=True, window_name="arch_region_bottom normals")
+
 o3d.visualization.draw_geometries(
-    [top_normals.paint_uniform_color([0.7, 0.7, 0.7]),
+    [arch_region_bottom.paint_uniform_color([0.0, 1.0, 0.0])],
+    window_name="arch_region_bottom",
+    mesh_show_back_face=True,
+)
+o3d.visualization.draw_geometries(
+    [arch_region_bottom.paint_uniform_color([0.7, 0.7, 0.7]),
      side_and_bottom_normals.paint_uniform_color([0.7, 0.7, 0.7]),
-     arch_region_bottom.paint_uniform_color([0.0, 1.0, 0.0])],
-    window_name="Extract the Bottom Part of the Arch Region",
+     top_without_pre_cut_region.paint_uniform_color([0.0, 1.0, 0.0])],
+    window_name="Final",
     mesh_show_back_face=True,
 )
 
+# Workflow - Generate the mesh
+final_insole = arch_region_bottom + side_and_bottom_normals + top_without_pre_cut_region
+mesh_bpa = bpa_reconstruction(final_insole)
+visualize_mesh(mesh_bpa)
 
+mesh_poisson = poisson_reconstruction(mesh_bpa)
+visualize_mesh(mesh_poisson)
 
 
 # Save to STL
 # o3d.io.write_triangle_mesh("custom_insole_union.stl", union_mesh)
 # print("Saved: custom_insole_union.stl")
-
-
 
 
 
